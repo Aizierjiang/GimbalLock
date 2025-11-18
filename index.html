@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gimbal Lock Demonstration</title>
+    <link rel="icon" href="data:;base64,=" type="image/x-icon"> <!-- This effectively disables the favicon -->
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        h1 {
+            margin: 0 0 20px 0;
+            color: #00ff88;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+            font-size: 24px;
+        }
+        
+        .angle-display {
+            margin: 10px 0;
+            font-size: 16px;
+            font-family: monospace;
+        }
+        
+        .yaw { color: #ff4444; }
+        .pitch { color: #44ff44; }
+        .roll { color: #4444ff; }
+        
+        .warning {
+            background: rgba(255, 0, 0, 0.2);
+            border: 2px solid #ff4444;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 8px;
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .controls {
+            margin-top: 20px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .control-group {
+            margin: 8px 0;
+            padding: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+        
+        .key {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-weight: bold;
+        }
+        
+        .reset-btn {
+            background: rgba(0, 255, 136, 0.2);
+            border: 1px solid #00ff88;
+            color: #00ff88;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: all 0.3s ease;
+        }
+        
+        .reset-btn:hover {
+            background: rgba(0, 255, 136, 0.4);
+            transform: translateY(-2px);
+        }
+        
+        #gimbal-status {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 50;
+            pointer-events: none;
+        }
+        
+        .lock-indicator {
+            background: rgba(255, 0, 0, 0.9);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 10px;
+            font-size: 32px;
+            font-weight: bold;
+            text-align: center;
+            animation: shake 0.5s infinite;
+            box-shadow: 0 0 30px rgba(255, 0, 0, 0.7);
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
+            25% { transform: translate(-50%, -50%) rotate(-1deg); }
+            75% { transform: translate(-50%, -50%) rotate(1deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="ui">
+            <h1>⚙️ GIMBAL LOCK DEMO</h1>
+            
+            <div class="angle-display yaw">
+                Yaw (Z): <span id="yaw-value">0.0°</span>
+            </div>
+            <div class="angle-display pitch">
+                Pitch (Y): <span id="pitch-value">0.0°</span>
+            </div>
+            <div class="angle-display roll">
+                Roll (X): <span id="roll-value">0.0°</span>
+            </div>
+            
+            <div id="lock-warning" class="warning" style="display: none;">
+                ⚠️ <strong>GIMBAL LOCK DETECTED!</strong><br>
+                Pitch ≈ ±90° - Two axes are now aligned!<br>
+                <small>Lost one degree of freedom</small>
+            </div>
+            
+            <div class="controls">
+                <div class="control-group">
+                    <span class="yaw">YAW:</span> <span class="key">Q</span>/<span class="key">A</span> - Rotate red ring
+                </div>
+                <div class="control-group">
+                    <span class="pitch">PITCH:</span> <span class="key">W</span>/<span class="key">S</span> - Rotate green ring
+                </div>
+                <div class="control-group">
+                    <span class="roll">ROLL:</span> <span class="key">E</span>/<span class="key">D</span> - Rotate blue ring
+                </div>
+                <div style="margin-top: 15px; font-style: italic;">
+                    Try setting Pitch to ±90° to trigger gimbal lock!
+                </div>
+                <button class="reset-btn" onclick="resetGimbals()">Reset View</button>
+            </div>
+        </div>
+        
+        <div id="gimbal-status">
+            <div id="lock-indicator" class="lock-indicator" style="display: none;">
+                🔒 GIMBAL LOCK
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0a0a);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.getElementById('container').appendChild(renderer.domElement);
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 10, 5);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+        
+        // Gimbal system
+        const gimbalGroup = new THREE.Group();
+        scene.add(gimbalGroup);
+        
+        // Create gimbal rings
+        function createGimbalRing(radius, color, segments = 64) {
+            const geometry = new THREE.RingGeometry(radius - 5, radius + 5, segments);
+            const material = new THREE.MeshLambertMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0.8,
+                side: THREE.DoubleSide
+            });
+            const ring = new THREE.Mesh(geometry, material);
+            
+            // Add wireframe outline
+            const wireGeometry = new THREE.RingGeometry(radius, radius, segments);
+            const wireMaterial = new THREE.LineBasicMaterial({ 
+                color: color, 
+                linewidth: 3,
+                transparent: true,
+                opacity: 1
+            });
+            const wireframe = new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints(
+                    new THREE.Path().absarc(0, 0, radius, 0, Math.PI * 2, false).getPoints(segments)
+                ),
+                wireMaterial
+            );
+            
+            const group = new THREE.Group();
+            group.add(ring);
+            group.add(wireframe);
+            
+            return group;
+        }
+        
+        // Create three gimbal rings
+        const outerRing = createGimbalRing(150, 0xff4444); // Red - Yaw
+        const middleRing = createGimbalRing(120, 0x44ff44); // Green - Pitch  
+        const innerRing = createGimbalRing(90, 0x4444ff); // Blue - Roll
+        
+        // Set up gimbal hierarchy
+        outerRing.add(middleRing);
+        middleRing.add(innerRing);
+        gimbalGroup.add(outerRing);
+        
+        // Rotate rings to show different orientations
+        middleRing.rotation.x = Math.PI / 2;
+        innerRing.rotation.y = Math.PI / 2;
+        
+        // Create coordinate axes for the inner object
+        const axesGroup = new THREE.Group();
+        
+        function createAxis(direction, color, label) {
+            const geometry = new THREE.CylinderGeometry(2, 2, 60);
+            const material = new THREE.MeshLambertMaterial({ color: color });
+            const axis = new THREE.Mesh(geometry, material);
+            
+            // Orient the axis
+            if (direction === 'x') axis.rotation.z = Math.PI / 2;
+            if (direction === 'z') axis.rotation.x = Math.PI / 2;
+            
+            axis.position.copy(new THREE.Vector3(
+                direction === 'x' ? 30 : 0,
+                direction === 'y' ? 30 : 0,
+                direction === 'z' ? 30 : 0
+            ));
+            
+            return axis;
+        }
+        
+        const xAxis = createAxis('x', 0xff4444, 'X');
+        const yAxis = createAxis('y', 0x44ff44, 'Y');
+        const zAxis = createAxis('z', 0x4444ff, 'Z');
+        
+        axesGroup.add(xAxis, yAxis, zAxis);
+        innerRing.add(axesGroup);
+        
+        // Add a central sphere
+        const sphereGeometry = new THREE.SphereGeometry(10, 16, 16);
+        const sphereMaterial = new THREE.MeshLambertMaterial({ 
+            color: 0xffff44,
+            emissive: 0x222200
+        });
+        const centerSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+        innerRing.add(centerSphere);
+        
+        // Camera position
+        camera.position.set(300, 200, 300);
+        camera.lookAt(0, 0, 0);
+        
+        // Euler angles
+        let euler = { yaw: 0, pitch: 0, roll: 0 };
+        const angleStep = 0.03;
+        
+        // Input handling
+        const keys = {};
+        
+        document.addEventListener('keydown', (event) => {
+            keys[event.code] = true;
+        });
+        
+        document.addEventListener('keyup', (event) => {
+            keys[event.code] = false;
+        });
+        
+        function updateGimbals() {
+            // Handle input
+            if (keys['KeyQ']) euler.yaw += angleStep;
+            if (keys['KeyA']) euler.yaw -= angleStep;
+            if (keys['KeyW']) euler.pitch += angleStep;
+            if (keys['KeyS']) euler.pitch -= angleStep;
+            if (keys['KeyE']) euler.roll += angleStep;
+            if (keys['KeyD']) euler.roll -= angleStep;
+            
+            // Clamp pitch to prevent flipping
+            euler.pitch = Math.max(-Math.PI/2 + 0.01, Math.min(Math.PI/2 - 0.01, euler.pitch));
+            
+            // Apply rotations to gimbal rings
+            outerRing.rotation.z = euler.yaw;
+            middleRing.rotation.x = Math.PI/2 + euler.pitch;
+            innerRing.rotation.y = Math.PI/2 + euler.roll;
+            
+            // Check for gimbal lock
+            const pitchDegrees = euler.pitch * 180 / Math.PI;
+            const isGimbalLocked = Math.abs(Math.abs(pitchDegrees) - 90) < 15;
+            
+            // Update UI
+            document.getElementById('yaw-value').textContent = (euler.yaw * 180 / Math.PI).toFixed(1) + '°';
+            document.getElementById('pitch-value').textContent = pitchDegrees.toFixed(1) + '°';
+            document.getElementById('roll-value').textContent = (euler.roll * 180 / Math.PI).toFixed(1) + '°';
+            
+            // Show/hide gimbal lock warning
+            const lockWarning = document.getElementById('lock-warning');
+            const lockIndicator = document.getElementById('lock-indicator');
+            
+            if (isGimbalLocked) {
+                lockWarning.style.display = 'block';
+                lockIndicator.style.display = 'block';
+                
+                // Add visual effects for gimbal lock
+                outerRing.children[1].material.emissive = new THREE.Color(0x440000);
+                innerRing.children[1].material.emissive = new THREE.Color(0x000044);
+            } else {
+                lockWarning.style.display = 'none';
+                lockIndicator.style.display = 'none';
+                
+                // Remove visual effects
+                outerRing.children[1].material.emissive = new THREE.Color(0x000000);
+                innerRing.children[1].material.emissive = new THREE.Color(0x000000);
+            }
+        }
+        
+        function resetGimbals() {
+            euler = { yaw: 0, pitch: 0, roll: 0 };
+        }
+        
+        // Auto-rotation for demonstration
+        let autoDemo = false;
+        let demoTime = 0;
+        
+        setTimeout(() => {
+            autoDemo = true;
+        }, 3000);
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Auto demo mode
+            if (autoDemo && Object.keys(keys).length === 0) {
+                demoTime += 0.01;
+                euler.pitch = Math.sin(demoTime * 0.5) * 1.4;
+                euler.yaw = Math.sin(demoTime * 0.3) * 2;
+                euler.roll = Math.sin(demoTime * 0.7) * 1.5;
+            }
+            
+            updateGimbals();
+            
+            // Gentle camera rotation
+            const time = Date.now() * 0.0005;
+            camera.position.x = Math.cos(time) * 400;
+            camera.position.z = Math.sin(time) * 400;
+            camera.lookAt(0, 0, 0);
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Disable auto-demo on interaction
+        document.addEventListener('keydown', () => {
+            autoDemo = false;
+        });
+        
+        animate();
+    </script>
+</body>
+</html>
